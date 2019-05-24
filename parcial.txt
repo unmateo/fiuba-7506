@@ -1,0 +1,337 @@
+MapReduce/Spark
+	Etapas
+		map
+		shuffle and sort
+		reduce
+############################
+	Normalización: Quiero llegar a que cada columna tenga promedio=0 y desvío estandar = 1
+		kdata = [(1,(1,0,2,3)),(0,(3,1,2,2)),(1,(0,0,-2,4)),(1,(1,1,-1,1)),(0,(2,-2,0,1))]
+		rsk = sc.parallelize(kdata, 4)
+		cant = rsk.count()
+		
+		rsk2 = rsk.flatMap(lambda x:([(idx,val) for idx,val in enumerate(x[1])]))	#descarta la clase y se queda con (columna,valor)
+			.reduceByKey(lambda x,y:x+y)	#suma todos los valores para cada columna -> [(0,7),(1,0),(2,1),(3,11)]
+			.map(lambda x:(x[0],float(x[1])/(cant)))	#calcula el promedio -> [(0,7/5),(1,0/5),(2,1/5),(3,11/5)]
+			.map(lambda x:x[1])	#descarta el numero de columna 
+		prom = rsk2.collect()	#[7/5,0,1/5,11/5]
+		
+		#el desvio se obtiene haciendo sqrt((sum[x-prom]^2)/(cant-1))
+		rsk3 = rsk.map(lambda x:tuple(map(sub,x[1],prom)))	#le aplica a cada valor de rsk la operacion resta -> queda rsk pero con los valores cambiados
+			.flatMap(lambda x:[(idx,val**2) for idx,val in enumerate(x)]) #descarta la clase y se queda con (columna,valor^2)
+			.reduceByKey(lambda x,y:x+y)	#hace la sumatoria y queda por cada (columna,sumatoria)
+			.map(lambda x:(x[1]/(cant-1)))	#hace la division y descarta la columna
+			.map(lambda x:sqrt(x)) 			#hace la raiz sobre esos numeros
+		var = rsk3.collect()	 			#[1.140, 1.224, 1.788, 1.303]
+		
+		#para normalizar rsk, a cada valor le resto el promedio y divido por la varianza de su columna
+		rsknorm = rsk.map(lambda x:(x[0],tuple(map(div,tuple(map(sub,x[1],prom)),var))))
+		norm = rsknorm.collect() #(1, (-0.35082320772281156, 0.0, 1.0062305898749053, 0.6135719910778962))...
+############################
+	KNN: k-nearest neighbors. Importante definir una distancia relevante al problema. Supongamos norma euclidea:
+		def euclid(x,y): return sqrt(sum( (x - y)**2 for x, y in zip(x, y)))
+		data = [(1,(1,0,2,3)),(0,(3,1,2,2)),(1,(0,0,-2,4)),(1,(1,1,-1,1)),(0,(2,-2,0,1))]
+		rsk = sc.parallelize(data, 4)
+		q = (0,0,-1,3)	#el punto para el cual voy a calcular KNN
+		rsk_nn = rsknorm.map(lambda x:(euclid(x[1],q),(x[0],x[1]))).reduce(lambda x,y:x if x<y else y)	#si n = 1
+		nn = rsk_nn.collect() #(1.4142135623730951, (1, (0, 0, -2, 4))) -> al punto q le asignaríamos la clase 1
+		k = 3
+		rsk_knn = rsk.map(lambda x:(euclid(x[1],q),(x[0],x[1]))).sortByKey()	#calculo todas las distancias y ordeno
+		knn = rsk_knn.take(k).collect()	#tomo los primeros k
+############################
+	Procesamiento de Textos
+		CuentaPalabras
+			data = ["Primer linea","Segunda linea","Tercera y anteultima linea","Cuarta y ultima linea"]
+			rsk = sc.parallelize(data, 4)
+			rsk2 = archivo.map(lambda x: x.split())	#hago un split de cada linea (me deja un registro por cada palabra
+				.map(lambda x:(x,1))	#a cada registro le asigno el valor 1
+				.reduceByKey(lambda x,y = x+y)	#junto por palabras sumando los valores
+				.sortBy(ascending=False,keyfunc=lambda x:x[1])	#ordeno por frecuencia
+			frecuencias = rsk2.collect() # [(Primer,1),(linea,4),(ultima,1)...]	
+		N-gramas: contar la frecuencia de cada secuencia de n caracteres
+			def trigramas(t): return [t[i:i+3] for i in range(0, len(t) - 2)]
+			rsk_f = data.flatMap(lambda x:trigrams(x))						#por cada registro, me genera uno por cada trigrama
+				.map(lambda x:(x,1))										#le asigna el valor 1 a cada registro
+				.reduceByKey(lambda x,y:x+y)								#junta los registros por trigrama sumando la cantidad
+				.sortBy(ascending=False,keyfunc=lambda x:x[1])				#ordena por frecuencia
+			frecuencias = rsk_f.collect()									#para cada trigrama su frecuencia
+			total = rsk.map(lambda x:x[1]).reduce(lambda x,y:x+y).collect() #suma todas las frecuencias
+			rsk_p = rsk.map(lambda x:(x[0],float(x[1])/total,3))			#calcula las probabilidades
+		probabilidades = rsk_p.collect()
+############################
+	Matrices: si dispersa, se guarda en registros (fila,columna,valor)
+		producto por vector
+			data = [(1,2,4),(1,5,3),(2,1,3),(3,2,2),(4,4,-1),5,1,1),(5,5,2)
+			vector =  [1,2,3,4,5]
+			rsk = sc.parallelize(data, 4)
+			rsk_prd = matrixRDD.map(lambda x:(x[0],(x[1],x[2])))		#reordena poniendo la fila como clave	[(fila,(columna,valor)),...]
+					.map(lambda x:(x[0],(vector[x[1][0]-1]*x[1][1])))	#calcula el producto por cada registro
+					.reduceByKey(lambda x,y:(x+y))						#suma los resultados parciales
+			producto = rsk_prd.collect()								#[(1,23),(2,3),(3,4),(4,-4),(5,11)]
+		producto entre matrices
+			m1 = [(1,1,1),(1,2,2),(2,1,3),(2,2,4)]
+			m2 = [(1,1,5),(1,2,6),(2,1,7),(2,2,8)]
+			r_m1 = sc.parallelize(m1, 4)
+			r_m2 = sc.parallelize(m2, 4)
+			r1 = m1.map(lambda x:(x[1],(x[0],x[2])))	#[columna,(fila,valor)]
+			r2 = m2.map(lambda x:(x[0],(x[1],x[2])))	#[fila,(columna,valor)]
+			rj = r1.join(r2)	#left join:	[(1, ((1, 1), (1, 5))),(1, ((1, 1), (2, 6))),(1, ((2, 3), (1, 5))),(1, ((2, 3), (2, 6))),(2, ((1, 2), (1, 7))),...]
+				.map(lambda x:((x[1][0][0],x[1][1][0]),x[1][0][1]*x[1][1][1]))	#hace el producto
+				.reduceByKey(lambda x,y:x+y)	#junta los resultados parciales
+			producto = rj.collect()				#[((1, 2), 22),((1, 1), 19),((2, 2), 50),((2, 1), 43)]
+############################
+	Compresión (modelar+codificar) / siempre miro velocidad vs nivel de compresión 
+		Complejidad de Kolmogorov: Sea x un string, K(x) es igual a la cantidad de bits mínimos que debe tener un programa que genera x
+		Aleatoreidad:  Sea x un string, se dice que x es random/aleatorio si y s´olo si K(x) = jxj. 
+		Distancia de Kolmorogov (cuántos bits hay que agregarle a un programa que genera X para que genere Y): KD(x;y) = K(xy) − min(K(x);K(y))
+		Distancia Normalizada de Kolmorogov: NKD = KD(X;Y)/max(K(x);K(y))
+		Intractabilidad: KD es incalculable, pero podemos aproximarla aplicando a X el mejor compresor posible
+		Distancia Normalizada de Compresión: NCD = C(X;Y)/max(C(x);C(y))
+	Teoría de la Información
+		Alfabeto: conjunto de símbolos distintos (binario,hexadecimal,etc.)
+		Mensaje: conjunto de símbolos de un determinado alfabeto
+		Fuente: conjunto de mensajes
+		Código: mensaje resultante de aplicar una función de codificación a otro mensaje (no necesariamente del mismo alfabeto)
+		Singularidad de Código: un código es no singular si para su función de codificación se cumple que dado f(x) = f(y) -> x = y (inyectiva)
+		Extensión de Código: función de mapeo de una fuente mediante la concatenación de los códigos de sus mensajes
+		Código Unívocamente Decodificable: cuando su extensión C* es no singular
+		Código Prefijo: C es prefijo si para ningún x existe C(y) que empiece con C(x)
+		Teo: Si un código es prefijo -> es decodificable
+		Entropía de una fuente: la esperanza de la longitud de sus códigos (en bits)
+			H(X) = Sum(Pi*Li) [probabilidad por longitud de cada código]
+			H(X) = - Sum(Pi*log2(Pi))
+			se maximiza cuando todos los mensajes son equiprobables (archivo aleatorio)
+			se minimiza cuando un mensaje tiene probabilidad 1 (fuente determinística)
+		Longitud Ideal: -log2(Pi)
+	Métodos de Compresión:
+		Estáticos: usan una tabla de frecuencia, requieren almacenarla y hacer dos pasadas (la primera para obtenerla la segunda para comprimir)
+		Dinámicos: requieren sólo una pasada -> sirven para streaming
+		Huffman Estático: 2 pasadas, no comprime mucho pero es muy rápido
+			1) Cuenta las frecuencias de cada mensaje y arma una tabla. A partir de la tabla, arma un arbol binario rotulando con 0 las ramas izquierdas y con 1 las derechas
+				Los mensajes con menor frecuencia quedan en hojas por lo que se codifican con más bits. En caso de empate, decisión consistente.
+			2) Con el arbol armado, hace la segunda pasada y va "traduciendo". La tabla de frecuencias se guarda en el archivo para poder decodificar
+			Para descomprimir, a partir de la tabla arma el arbol y va leyendo el archivo y recorriendo el arbol para traducir.
+		Huffman Dinámico: (una sola pasada) -> menor compresión que estático pero más rápido
+			Inicializo el árbol con frecuencia 1 para todos los mensajes posibles (256 en 8 bits). Esto significa, en principio, asignar una probabilidad igual a cada uno.
+			Para cada caracter:
+				Lo comprimo
+				Aumento la frecuencia
+				Armo el arbol nuevamente
+			No requiere guardar la tabla de frecuencias ya que descomprime de la misma forma (inicializa el arbol con frecuencias = 1)
+		Orden Superior (n>0): para armar las probabilidades (frecuencias) tengo en cuenta los caracteres anteriores (contexto)
+			Huffman Estático
+				En la tabla, en vez de frecuencias del símbolo, pongo frecuencias del contexto (n símbolos que siguen)
+				Los primeros n símbolos se copian sin comprimir (no tienen contexto)
+				Armo un árbol para cada contexto posible. Sí sólo hay una posibilidad, se emite directamente desde la tabla
+			Huffman Dinámico:
+				La misma idea, cada símbolo tiene su árbol de contexto en donde todos los símbolos se inicializan con frecuencia 1
+			Para ambos casos, conviene usarlo en archivos grandes donde haya muchas repeticiones y/o las tablas queden pequeñas
+		Compresión Aritmética:
+			Transforma un archivo en un número en el intervalo [0;1) donde la precisión determina la longitud del archivo
+			Los mensajes quedan comprimidos en una cantidad no entera de bits -> se aproxima mejor a la longitud ideal -log2(Pi)
+			También hay métodos estáticos dinámicos y de distintos órdenes
+			Estático:
+				Arma la tabla de probabilidades y divide el intervalo [0,1) según esas probabilidades
+				Toma el primer símbolo y agarra su intervalo
+				Divide el nuevo intervalo según la misma tabla
+				Repite hasta haber procesado toda la fuente. El resultado es cualquier número dentro del último intervalo
+				Para descomprimir, arma el intervalo inicial con las probabilidades de la tabla y va emitiendo usando el número comprimido y volviendo a armar los intervalos
+		Compresión LZ:
+			Se basan en la premisa de que una secuencia de símbolos encontrada probablemente se repita.
+			A medida que procesa, analiza un buffer de n símbolos anteriores buscando repeticiones y al encontrar una emite un puntero a esa posición
+			La velocidad de compresión depende del tamaño del buffer (que tan atrás vamos a buscar repeticiones)
+			La velocidad de decompresión es excelente porque sólo necesita copiar el contenido de los punteros
+			RLE K (Run Length Encoding):
+				Va emitiendo cada símbolo y cuando encuentra k consecutivos emite un entero que indica cúantas repeticiones más de ese símbolo copiar
+				Muy mala compresión pero rápido para comprimir y descomprimir
+			LZSS (LZ77):
+				Usa el primer bit para distinguir repeticiones (1) de literales (0)
+				Cuando encuentra una repetición emite un 1 seguido de la posición de la repetición en la ventana y la longitud. Si no, un 0 y 8 bits de literal
+				Parámetros:
+					Longitud de la ventana
+					Longitud mínima de match
+				Ejemplo (ventana de 4 bytes longitud mínima de 2 bytes)
+					ABCDADADAABDAA
+					0A 0B 0C 0D 0A 1(1,4) 0A 0B 1(3,3)
+					0A 0B 0C 0D 0A 10110 0A 0B 0C 11101 (la ventana se indexa desde la derecha y acá usa 2 bits para posición inicial y 2 bits para la longitud)
+			Flexible Parsing: mejora en el algoritmo para que mire el siguiente símbolo y elija cuándo es óptimo encodear (ej: curry urrent current)
+			LZHuf (Deflate):
+				Mismo modelo que LZSS pero para codificar usa un árbol de Huffman dinámico
+				No requiere el bit indicador
+				Mejor compresión y velocidad
+			LZW:
+				Arranca con una tabla con todos los símbolos posibles
+				Toma el símbolo, lo busca en la tabla. Toma el siguiente y mira si la secuencia ANT+SIG está en la tabla
+				Repite hasta que la secuencia no esté, emite el índice en tabla de la última que encontró y agrega a la tabla la que no encontró.
+				Tiene que manejar el llenado y actualización de la tabla (clearing)
+				El descompresor es bastante complicado porque no van sincronizados.
+				Permite mejoras usando compresión aritmética
+				Permite calcular la complejidad de compresión de un archivo
+			Snappy: rapidez sobre compresión.
+				El primer byte de cada bloque indica qué viene a continuación. Los primeros dos bits del primer byte pueden ser:
+					00: sigue un literal
+					01: sigue un match de 1 byte
+					02	sigue un match de 2 bytes
+			LZMA: el mejor nivel de compresión, pero implementación falopa
+		Block Sorting: muy buen rendimiento
+			Etapas
+				Transformación de Burrows y Wheeler: lo localiza
+				MTF: aprovecha la localización (preponderancia de símbolos por zona)
+				Compresor estadístico: muy eficiente a la salida de MTF
+		PAQ: el mejor rendimiento
+			Utiliza distintos modelos según el contexto, aprendiendo a medida que avanza
+############################
+Funciones de Hashing
+	Función que recibe cualquier dato y devuelve un entero dentro de un cierto rango
+	Input: espacio de claves
+	Output: espacio de direcciones
+	Fold and Add: convierte el dato en un entero y aplica módulo
+	Manejo de colisiones:
+		Hashing Cerrado: búsqueda lineal para encontrar un lugar libre dentro de la misma tabla
+		Hashing Abierto: en cada dirección, una lista de elementos
+	FNV: usa ciertos números primos
+	Jenkins: usa operaciones lógicas
+	Pearson: usa operaciones lógicas y números aleatorios
+Funciones criptográficas:
+	Requieren:
+		Menor cantidad de colisiones posibles
+		Evitar que dado h(x) se pueda hallar x
+		Evitar que se pueda hallar x e y tal que h(x)=h(y)
+		Evitar efecto avalancha. Cambio mínimo en x tiene que producir cambio grande en h(x)
+	SHA-256
+Hashing Universal: algoritmo que permite contruir n funciones de hashing
+	Para valores atómicos (numéricos)
+	Para claves de longitud fija
+	Para claves de longitud variable
+Cuckoo Hashing: muy eficiente
+	Tengo k (usualmente pequeño 2,3) funciones de hashing disponibles
+	Intento insertar un dato en la primera. Si hay colisión, en la siguiente y así
+	Tengo que evitar que mi algoritmo entre en loop cuando todas mis funciones colisionen
+	Puedo usar un stash de tamaño constante para cuando colisionan todas mis funciones
+	Vectores dispersos:
+		Se puede guardar muy eficientemente un vector disperso en una estructura basada en cuckoo hashing y que permita realizar ciertas operaciones como producto interno en O(k) donde k(elementos no nulos)<<n
+Hashing Perfecto: sin colisiones -> O(1) siempre
+	FKS: dos niveles de hashing
+Hashing Perfecto y Mínimo: además, que ocupe O(m) espacio
+	Sólo es posible si se conocen todas las claves a guardar y los datos son estáticos
+	HDC (Hash Displace & Compress)
+Hashing Consistente: para entornos distribuidos
+	Objetivo: determinar en qué equipo almacenar un dato
+	Requerimiento: que no haya que recalcular claves al agregar/sacar equipos
+	Utilizado en sistemas como DynamoDB y Cassandra
+The Hashing Trick (THT) (Feature Hashing/Hash Kernels)
+	En vez de analizar palabras en un documento, hasheo cada una y en mi espacio de direcciones guardo la cantidad de colisiones. Luego uso para operar ese vector de espacio de direcciones.
+	Esto está justificado por el Teo. de Johnson y Lindenstrauss
+Método de Weinberger
+	En los casos en los que THT no funcione bien, puedo usar una segunda función de hashing que devuelva uno entre dos valores posibles (1 y -1)
+	De esta forma, mi vector resultante va a tener sus columnas con promedio 0, porque siempre estoy sumando o restando ocurrencias
+Filtro de Spam
+	Cuando un usuario marca un email como spam, le agrego el usuario, aplico THT y guardo el resultado
+	Luego, a cada email entrante le aplico THT y comparo con los que clasifiqué como spam
+Teorema de Johnson y Lindenstrauss: dim(A) = DxK
+	Es posible representar a los datos en una cantidad de dimensiones en el orden de O(log(n)), de forma tal que las distancias en el nuevo espacio dimensional sean muy similares a las distancias entre los puntos en el espacio original.
+	Esto es porque cualquier transformación que preserve la norma, preserva distancias y productos internos.
+	1ra Proyección
+		Aij = elemento aleatorio de una distribución normal estándar
+	2da Proyección
+		Aij = +- 1 con probabilidad 1/2
+	3ra Proyección: más eficiente computacionalmente
+		Aij = sqrt(3) * {1 (P(1)=1/6; -1 (P(-1)=1/6; 0 (P(0)=4/6;}
+############################
+LSH (Locally Sensitive Hashing)
+	Brinda solución aproximada pero muy rápida al problema de KNN
+	Me guardo una tabla de hash abierto. Tomo los k más cercanos del mismo bucket que mi query
+	La función de hashing que use debe dar probabilidades:
+		altas de encontrar buckets con puntos cercanos
+		bajas de encontrar buckets con puntos lejanos
+		Falsos Positivos: punto lejano al query que se marcó como cercano.
+			Esto se puede solucionar calculando distancia y descartándolo
+		Falsos Negativos: punto cercano al query pero que no fue hallado.
+			Esto sólo se puede solucionar por fuerza bruta
+	Minhashes:
+		monótona y continua respecto a la distancia (menor distancia -> mayor probabilidad de colisión)
+		la probabilidad de colisión entre dos clases debe depender de su distancia
+		eficiente (mejor que fuerza bruta)
+		randomizable (tengo que poder encontrar distintos para la misma clave) -> familia de funciones
+	Reducción de Falsos Positivos: quiero disminuir la prob. de encontrar en un bucket dos elementos cuya distancia sea grande
+		Uso r funciones minhash -> guardo en r buckets
+		Cuando voy a buscar, los elementos de mi bucket posta son los que están en todos (intersección) los buckets que me dan mis r funciones
+	Reducción de Falsos Negativos: quiero aumentar la prob. de que dados dos elementos cercanos los encuentre en el mismo bucket
+		uso b tablas de hashing
+		considero que x e y son vecinos si están en el mismo bucket para alguna de mis b tablas de hashing
+	Usando las dos ideas: 
+		p(r;b) = 1 − (1 − p^r)^b
+		tengo que poder construir minhashes parametrizados para poder simularlos y elegir los valores de r y b que me den las probabilidades que necesito
+LSH para distancia de Jaccard
+LSH para distancia Angular
+	Método de los Hiperplanos
+	Voronoi Hashing
+	Método de los Polítopos
+LSH para distancia Euclideana
+	Método de las Proyecciones Aleatorias
+	KLSH (K-means)
+	K-means Jerárquico
+LSH para distancia Hamming
+Multiprobing
+	Busca aumentar la precisión (disminuir falsos negativos) sin necesitar demasiadas tablas de hash
+	Para cada distancia hay una forma de aplicarlo
+LSH para Máxima Semejanza
+	Los métodos anteriores no son eficientes para distinguir elementos que sean iguales/casi iguales
+	Jaccard: hago una traducción de mis shingles a strings y puedo analizar semejanza según:
+		Longitud: cantidad de shingles
+		Prefijos: miro si los primeros k shingles se comparten
+		Prefijos y posiciones: además del prefijo, posición relativa
+		Prefijos, posiciones y longitud: (las tres anteriores)
+LSH forests
+	Convierto cada minhash en un 0 o 1 según algún criterio (por ej. par/impar)
+	Inserto el dato en un árbol binario de búsqueda, dónde voy avanzando aplicando nuevos minhashes hasta llegar a una hoja vacía
+	Conviene tener varios árboles (por eso forest)
+	Para buscar resultados, voy aplicando los minhashes en paralelo en cada árbol hasta llegar a la hoja que comparta el mayor prefijo con nuestro dato.
+############################
+Reducción de Dimensiones
+	Objetivo: mejorar performance/disminuir ruido
+	SVD (Singular Value Decomposition): A = U x Σ x V^tabla
+	SVD Reducida: misma forma, pero bajo ciertas condiciones se anulan varias filas/columnas (aquellas con valores singulares nulos)
+	Aproximación de rango k (aprovecho que los autovalores están ordenados por importancia):
+		Me quedo con las primeras k columnas de U, las primeras k filas y columnas de Σ y las primeras k columnas de V
+		Para medir el error, puedo calcular la diferencia o la pérdida de energía
+		Resultado: se elimina el ruido
+	Agregar nuevos datos:
+		Recalcular la SVD: costoso pero único método correcto
+		Aproximación: agregar un nuevo vector en la última fila de U
+	PCA (Principal Component Analysis): similar, pero peor. Usa la matriz de covarianza
+	MDS (Multidimensional Scaling)
+		Algoritmo que usando SVD permite obtener puntos a partir de sus distancias
+	Perceptual Mapping:
+		Aplicación de MDS que permite construir los datos (features) a partir de comparaciones entre ellos.
+	ISOMAP:
+		Construir un grafo a partir de los datos
+		Calcular las distancias en el grafo
+		Aplicar MDF para obtener una representación de los datos en pocas dimensiones
+	Laplacian Eigenmaps:
+		Misma idea que ISOMAP pero construyendo el grafo de otra forma
+		Se usa en Custrering Espectral y Spectral Hashing
+	T-SNE: Mejor algoritmo para representar los datos en dos o tres dimensiones
+############################
+Information Retrieval
+	Búsqueda de un término en una colección de documentos
+	Índices Invertidos: por cada término, lista de documentos donde aparece
+	Hay que almacenar eficientemente:
+		Léxico: la lista de términos
+		Punteros: los números de documento donde ocurren los términos
+	Almacenamiento de Léxico:
+		Léxico Concatenado
+			Se almacenan los téminos concatenados y por otro lado una tabla con el offset en bytes a la posición donde está cada término
+		Front Coding: aprovecha que el léxico está ordenado alfabéticamente por lo que los términos consecutivos suelen compartir los primeros caracteres
+			Se almacena una estructura triple de chars cant_chars_iguales/cant_chars_diff/puntero_a_chars
+		Tabla de Hash:
+			Si la memoria alcanza, mucho mejor [O(1) vs O(log n)]
+			Idealmente, hashing perfecto o lo más parecido posible
+	Almacenamiento de Punteros:
+		Los buckets de documentos están ordenados de forma creciente.
+		Guardo el primer número y luego las diferencias usando VBCode
+		VBCode (Variable bit code):	
+			Uso el primer bit en 1 para indicar que el número sigue o 0 para indicar que termina en ese byte.
+	Evaluación de Consultas
+		Precision: cantidad de documentos relevantes sobre total de documentos recuperados
+		Recall: cantidad de documentos relevantes recuperados sobre total de documentos relevantes
+		F1 = 2*(P*R)/(P+R)
