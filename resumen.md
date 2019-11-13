@@ -98,5 +98,44 @@ __3. Cualquier compresor estadístico o aritmético__
 Aprovechando que se tiene un archivo con mayoría de bits bajos y repetidos, se obtiene un muy buen nivel de compresión.
 
 # Hashing
+
+## Hashing Universal
+
+- Claves numéricas
+- Claves de longitud fija
+- Claves de longitud variable
+
+## Hashing Perfecto
+
+No genera colisiones -> Búsquedas en O(1)
+### FKS
+
+## Hashing Perfecto y mínimo
+
+Además de no generar colisiones, ocupa O(m) espacio
+
+### Hash and Displace
+
+## Hashing Consistente
+
+Esquema utilizado en almacenamiento distribuído de datos {clave: valor}. Se usa para determinar en qué k (cantidad de réplicas) nodos almacenar un nuevo dato permitiendo agregar/quitar nodos sin necesidad de rehashear de más.
+
+Se hashean los nodos al intervalo circular [0, 1). Al agregar una clave, se hashea al mismo intervalo y se copia en los primeros k equipos que queden a su derecha. Al quitar un nodo, sólo hay que rehashear sus claves al siguiente del intervalo. Al agregar un nodo,  sólo hay que rehashear los del nodo anterior al nuevo.  
+
+## The Hashing Trick
+
+Basado en el modelo BOW (Bag of Words), sintetiza información  de strings de forma muy eficiente. 
+
+    Bow: cada string queda representado en un vector que tiene tantas dimensiones como todo el diccionario de palabras posibles.
+
+__Hashing Trick: elijo un tamaño de vector, hasheo cada palabra a ese intervalo e incremento esa posición.__ Quedan vectores dispersos pero de tamaño limitado. Con alguna variación, la idea puede aplicarse a datos que no sean textos. En general, las colisiones no son un problema y pueden indicar relaciones entre los features.
+
+_Método de Weinberger_: aplicar una segunda función de hashing que de -1 o 1 y en base a ese resultado decidir si incrementar o decrementar el contador. De esta forma el promedio de cada columna de los vectores tenderá a cero, minimizando el efecto de las colisiones. Hacer esto permite estimar semejanza entre los vectores con su producto interno (mayor producto interno, mayor semejanza).
+
+### Aplicación: Filtros de SPAM personalizados
+
+
+
+
 # Reducción de Dimensiones
 # Information Retrieval
